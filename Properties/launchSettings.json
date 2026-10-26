@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "ukg_wfm_sync": {
+      "commandName": "Project",
+      "commandLineArgs": "--port 7206",
+      "launchBrowser": false
+    }
+  }
+}

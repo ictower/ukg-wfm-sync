@@ -1,2 +1,0 @@
-# ukg-wfm-sync
-
