@@ -9,51 +9,18 @@ public class AuthenticationService(IHttpClientFactory httpClientFactory)
 
     public async Task<(string token, string baseUrl, string appKey)> Authenticate(KeyVaultService kv)
     {
-        return await Authenticate(kv, null);
-    }
-
-    public async Task<(string token, string baseUrl, string appKey)> Authenticate(
-        KeyVaultService kv,
-        string? env)
-    {
-        env = env?.ToUpperInvariant() ?? "UAT";
-
-        string baseUrl;
-        string username;
-        string password;
-        string clientId;
-        string clientSecret;
-        string appKey;
-
-        if (env == "PROD")
-        {
-            baseUrl = Environment.GetEnvironmentVariable("UKG_WFM_BASE_URL_PROD")!;
-
-            username = await kv.GetSecret("ukg-wfm-username");
-            password = await kv.GetSecret("ukg-wfm-password");
-            clientId = await kv.GetSecret("ukg-wfm-clientid");
-            clientSecret = await kv.GetSecret("ukg-wfm-clientsecret");
-            appKey = await kv.GetSecret("ukg-wfm-appkey");
-        }
-        else
-        {
-            baseUrl = Environment.GetEnvironmentVariable("UKG_WFM_BASE_URL_UAT")!;
-
-            username = await kv.GetSecret("ukg-wfm-uat-username");
-            password = await kv.GetSecret("ukg-wfm-uat-password");
-            clientId = await kv.GetSecret("ukg-wfm-uat-clientid");
-            clientSecret = await kv.GetSecret("ukg-wfm-uat-clientsecret");
-            appKey = await kv.GetSecret("ukg-wfm-uat-appkey");
-        }
+        var baseUrl = Environment.GetEnvironmentVariable("UKG_WFM_BASE_URL_PROD")!;
+        var username = await kv.GetSecret("ukg-wfm-username");
+        var password = await kv.GetSecret("ukg-wfm-password");
+        var clientId = await kv.GetSecret("ukg-wfm-clientid");
+        var clientSecret = await kv.GetSecret("ukg-wfm-clientsecret");
+        var appKey = await kv.GetSecret("ukg-wfm-appkey");
 
         HttpClient http = _httpClientFactory.CreateClient();
 
-        var req = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"{baseUrl}/api/authentication/access_token");
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/authentication/access_token");
 
-        req.Headers.Accept.Add(
-            new MediaTypeWithQualityHeaderValue("application/json"));
+        req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
         req.Content = new FormUrlEncodedContent(
         [
@@ -70,17 +37,14 @@ public class AuthenticationService(IHttpClientFactory httpClientFactory)
 
         if (!res.IsSuccessStatusCode)
         {
-            Console.WriteLine(
-                $"Authentication Failed | Environment: {env} | StatusCode: {(int) res.StatusCode}");
-
+            Console.WriteLine($"Authentication Failed | StatusCode: {(int) res.StatusCode}");
             throw new Exception(json);
         }
 
         JsonElement root = JsonSerializer.Deserialize<JsonElement>(json);
-
         var token = root.GetProperty("access_token").GetString()!;
 
-        Console.WriteLine($"Authentication Complete | Environment: {env}");
+        Console.WriteLine("Authentication Complete");
 
         return (token, baseUrl, appKey);
     }

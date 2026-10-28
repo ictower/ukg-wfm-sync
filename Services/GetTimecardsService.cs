@@ -5,75 +5,39 @@ using ukg_wfm_sync.Models;
 
 namespace ukg_wfm_sync.Services;
 
-public class GetTimecardsService(
-    IHttpClientFactory httpClientFactory,
-    SqlService sqlService)
+public class GetTimecardsService(IHttpClientFactory httpClientFactory, SqlService sqlService)
 {
     private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
     private readonly SqlService _sqlService = sqlService;
 
-    public async Task<long> Run(
-        string token,
-        string baseUrl,
-        string appKey)
+    public async Task<long> Run(string token, string baseUrl, string appKey)
     {
-        DataTable employeeTable =
-            await _sqlService.QueryAsync(
-                """
-                SELECT person_number
-                FROM ukg_wfm.people
-                ORDER BY person_number;
-                """);
-
-        List<string> employeeNumbers =
-        [
-            .. employeeTable.Rows
-                .Cast<DataRow>()
-                .Select(x => x["person_number"].ToString()!)
-        ];
-
-        Console.WriteLine(
-            $"Employees Loaded | Count: {employeeNumbers.Count}");
-
-        await _sqlService.ExecuteAsync(
-            """
-            TRUNCATE TABLE ukg_wfm.timecards;
+        DataTable employeeTable = await _sqlService.QueryAsync("""
+            SELECT person_number
+            FROM ukg_wfm.raw_people
+            ORDER BY person_number;
             """);
+
+        List<string> employeeNumbers = [.. employeeTable.Rows.Cast<DataRow>().Select(x => x["person_number"].ToString()!)];
+
+        Console.WriteLine($"Employees Loaded | Count: {employeeNumbers.Count}");
 
         long totalSegments = 0;
 
         for (var year = 2024; year <= DateTime.Today.Year; year++)
         {
             var startDate = $"{year}-01-01";
+            var endDate = year == DateTime.Today.Year ? DateTime.Today.ToString("yyyy-MM-dd") : $"{year}-12-31";
 
-            var endDate =
-                year == DateTime.Today.Year
-                    ? DateTime.Today.ToString("yyyy-MM-dd")
-                    : $"{year}-12-31";
-
-            Console.WriteLine(
-                $"Year Started | Year: {year}");
+            Console.WriteLine($"Year Started | Year: {year}");
 
             for (var i = 0; i < employeeNumbers.Count; i += 75)
             {
-                List<string> batch =
-                [
-                    .. employeeNumbers
-                        .Skip(i)
-                        .Take(75)
-                ];
+                List<string> batch = [.. employeeNumbers.Skip(i).Take(75)];
 
-                Console.WriteLine(
-                    $"Batch Started | Year: {year} | Offset: {i} | Employees: {batch.Count}");
+                Console.WriteLine($"Batch Started | Year: {year} | Offset: {i} | Employees: {batch.Count}");
 
-                List<TimecardRecord> records =
-                    await GetBatch(
-                        token,
-                        baseUrl,
-                        appKey,
-                        batch,
-                        startDate,
-                        endDate);
+                List<TimecardRecord> records = await GetBatch(token, baseUrl, appKey, batch, startDate, endDate);
 
                 totalSegments += records.Count;
 
@@ -91,85 +55,50 @@ public class GetTimecardsService(
 
                     foreach (TimecardRecord record in records)
                     {
-                        DataRow row = table.NewRow();
-
-                        row["employee_number"] = record.EmployeeNumber;
-
-                        row["apply_date"] =
-                            string.IsNullOrWhiteSpace(record.ApplyDate)
-                                ? DBNull.Value
-                                : DateTime.Parse(record.ApplyDate);
-
-                        row["hours_worked"] = record.HoursWorked;
-
-                        row["project_code"] = record.ProjectCode;
-
-                        row["project_description"] = record.ProjectDescription;
-
-                        row["activity_name"] = record.ActivityName;
-
-                        row["activity_description"] = record.ActivityDescription;
-
-                        table.Rows.Add(row);
+                        _ = table.Rows.Add(
+                            record.EmployeeNumber,
+                            string.IsNullOrWhiteSpace(record.ApplyDate) ? DBNull.Value : DateTime.Parse(record.ApplyDate),
+                            record.HoursWorked,
+                            record.ProjectCode,
+                            record.ProjectDescription,
+                            record.ActivityName,
+                            record.ActivityDescription);
                     }
 
-                    await _sqlService.BulkInsertAsync(
-                        "ukg_wfm.timecards",
-                        table);
+                    await _sqlService.BulkInsertAsync("ukg_wfm.raw_timecards", table);
                 }
 
-                Console.WriteLine(
-                    $"Batch Complete | Year: {year} | Records: {records.Count} | RunningTotal: {totalSegments}");
+                Console.WriteLine($"Batch Complete | Year: {year} | Records: {records.Count} | RunningTotal: {totalSegments}");
             }
         }
 
         return totalSegments;
     }
 
-    private async Task<List<TimecardRecord>> GetBatch(
-        string token,
-        string baseUrl,
-        string appKey,
-        List<string> employeeNumbers,
-        string startDate,
-        string endDate)
+    private async Task<List<TimecardRecord>> GetBatch(string token, string baseUrl, string appKey, List<string> employeeNumbers, string startDate, string endDate)
     {
         HttpClient http = _httpClientFactory.CreateClient();
 
-        var body = new
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl}/api/v1/timekeeping/timecard/multi_read")
         {
-            where = new
-            {
-                employees = new
+            Content = new StringContent(
+                JsonSerializer.Serialize(new
                 {
-                    qualifiers = employeeNumbers
-                },
-                dateRange = new
-                {
-                    startDate,
-                    endDate
-                }
-            },
-            select = new[]
-            {
-                "PROCESSED_SEGMENTS"
-            }
+                    where = new
+                    {
+                        employees = new { qualifiers = employeeNumbers },
+                        dateRange = new { startDate, endDate }
+                    },
+                    select = new[] { "PROCESSED_SEGMENTS" }
+                }),
+                Encoding.UTF8,
+                "application/json")
         };
-
-        var req = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"{baseUrl}/api/v1/timekeeping/timecard/multi_read");
 
         req.Headers.Add("Authorization", $"Bearer {token}");
         req.Headers.Add("appkey", appKey);
 
-        req.Content = new StringContent(
-            JsonSerializer.Serialize(body),
-            Encoding.UTF8,
-            "application/json");
-
         HttpResponseMessage res = await http.SendAsync(req);
-
         var json = await res.Content.ReadAsStringAsync();
 
         if (!res.IsSuccessStatusCode)
@@ -178,7 +107,6 @@ public class GetTimecardsService(
         }
 
         JsonElement root = JsonSerializer.Deserialize<JsonElement>(json);
-
         List<TimecardRecord> records = [];
 
         foreach (JsonElement employee in root.EnumerateArray())
@@ -229,28 +157,14 @@ public class GetTimecardsService(
                     }
                 }
 
-                var employeeNumber = segment.GetProperty("employee")
-                        .GetProperty("qualifier")
-                        .GetString() ?? "";
-
                 records.Add(new TimecardRecord
                 {
-                    EmployeeNumber = employeeNumber,
-
-                    ApplyDate = segment.TryGetProperty("applyDate", out JsonElement applyDate)
-                        ? applyDate.GetString() ?? ""
-                        : "",
-
-                    HoursWorked = segment.TryGetProperty("durationInSeconds", out JsonElement seconds)
-                        ? seconds.GetInt64() / 3600.0
-                        : 0,
-
+                    EmployeeNumber = segment.GetProperty("employee").GetProperty("qualifier").GetString() ?? "",
+                    ApplyDate = segment.TryGetProperty("applyDate", out JsonElement applyDate) ? applyDate.GetString() ?? "" : "",
+                    HoursWorked = segment.TryGetProperty("durationInSeconds", out JsonElement seconds) ? seconds.GetInt64() / 3600.0 : 0,
                     ProjectCode = projectCode,
-
                     ProjectDescription = projectDescription,
-
                     ActivityName = activityName,
-
                     ActivityDescription = activityDescription
                 });
             }

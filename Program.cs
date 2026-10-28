@@ -9,12 +9,7 @@ builder.ConfigureFunctionsWebApplication();
 
 builder.Services.AddHttpClient();
 
-builder.Services.AddScoped(_ =>
-{
-    var url = Environment.GetEnvironmentVariable("KEYVAULT_URL")!;
-    return new KeyVaultService(url);
-});
-
+builder.Services.AddScoped(_ => new KeyVaultService(Environment.GetEnvironmentVariable("KEYVAULT_URL")!));
 builder.Services.AddScoped<AuthenticationService>();
 builder.Services.AddScoped<GetPeopleService>();
 builder.Services.AddScoped<GetTimecardsService>();
